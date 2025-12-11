@@ -2,7 +2,7 @@
 
 Arquivos:
 - `comandos.py`: implementa o controlador e métodos equivalentes aos comandos RPA.
-- `main.py`: exemplo de uso do `WebController` mostrando um fluxo simples.
+- `main.py`: runner central da automação.
 - `requirements.txt`: dependências sugeridas.
 
 Como executar (Windows PowerShell):
@@ -12,11 +12,11 @@ Como executar (Windows PowerShell):
 Este repositório contém um conjunto de utilitários para automação de tarefas
 usando Selenium (controlador em `comandos.py`) e integração com um banco Oracle
 via `oracledb`. O código principal de execução da automação está em
-`automacao_repasse.py` e o runner central em `main.py`.
+`processamento.py` e o runner central em `main.py`.
 
 Visão geral dos arquivos
 - `comandos.py` — `WebController` (wrapper Selenium) e `DBClient` (wrapper oracledb).
-- `automacao_repasse.py` — lógica de orquestração do robô (fluxos, chamadas ao DB e navegador).
+- `processamento.py` — lógica de orquestração do robô (fluxos, chamadas ao DB e navegador).
 - `main.py` — runner central que inicializa `Config`, `DBClient` e `RepasseAutomation`.
 - `requirements.txt` — dependências Python sugeridas.
 
@@ -46,7 +46,7 @@ pip install -r requirements.txt
 Configurar variáveis de ambiente (ou `.env`)
 
 O projeto lê algumas variáveis do ambiente via `Config.from_env()` em
-`automacao_repasse.py`. Para testes locais você pode criar um arquivo `.env` na
+`processamento.py`. Para testes locais você pode criar um arquivo `.env` na
 raiz com conteúdo como:
 
 ```ini

@@ -1,7 +1,6 @@
 """
-Módulo para envio de notificações para o Zoho Cliq.
-Este módulo fornece uma interface simples para enviar mensagens
-e notificações para canais ou usuários no Zoho Cliq.
+Módulo para envio de notificações.
+Este módulo fornece uma interface simples para enviar mensagens e notificações.
 """
 
 import json

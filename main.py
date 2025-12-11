@@ -1,4 +1,4 @@
-# main.py
+
 from logs.logger_config import logger
 from processamento import Config, Processamento
 from comandos import DBClient

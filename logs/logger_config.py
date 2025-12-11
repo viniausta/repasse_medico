@@ -1,4 +1,4 @@
-# logger_config.py
+
 import logging
 import os
 from logging.handlers import RotatingFileHandler
@@ -16,7 +16,7 @@ LOG_FORMAT = "%(asctime)s [%(levelname)s] [%(name)s] %(message)s"
 DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 # Cria o logger principal
-logger = logging.getLogger("automacao_repasse")  # Nome do logger
+logger = logging.getLogger("automacao_repasse")
 logger.setLevel(logging.INFO)
 
 # Evita duplicação de handlers em importações múltiplas

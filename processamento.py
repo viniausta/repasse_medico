@@ -1,6 +1,7 @@
 
 from __future__ import annotations
 
+import oracledb
 from logs.logger_config import logger
 import os
 from dataclasses import dataclass
@@ -8,16 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Protocol, Tuple, runtime_checkable
 from comandos import WebController, DBClient
-
-try:
-    import oracledb
-except Exception:
-    oracledb = None
-
-try:
-    from dotenv import load_dotenv
-except Exception:
-    load_dotenv = None
+from dotenv import load_dotenv
 
 if load_dotenv:
     load_dotenv()
@@ -62,16 +54,22 @@ class Config:
     db_host: str
     db_port: str
     db_service: str
+    id_unidade: str
+    id_projeto: str
+    caminho_chrome_driver: str
 
     @classmethod
     def from_env(cls) -> "Config":
-        caminho = os.environ.get(
-            "CAMINHO_PADRAO", r"C:\IBMRPA\Hospital\Austa_RepasseMedico")
+        caminho = os.environ.get("CAMINHO_PADRAO", " ")
         dev = os.environ.get("DEV", "False").lower() in ("1", "true", "yes")
         user = os.environ.get("BD_USUARIO", "")
         pwd = os.environ.get("BD_SENHA", "")
         lista = os.environ.get("AUSTA_BD_ORACLE_DEV", "")
         host, port, service = ("", "", "")
+        id_unidade = os.environ.get("ID_UNIDADE", "")
+        id_projeto = os.environ.get("ID_PROJETO", "")
+        driver = os.environ.get("CAMINHO_CHROME_DRIVER", "")
+
         if lista:
             parts = lista.split(",")
             host = parts[0] if len(parts) > 0 else ""
@@ -86,6 +84,9 @@ class Config:
             db_host=host,
             db_port=port,
             db_service=service,
+            id_unidade=id_unidade,
+            id_projeto=id_projeto,
+            caminho_chrome_driver=driver
         )
 
 
@@ -108,9 +109,17 @@ class Processamento:
         timestamp = now.strftime("%d.%m.%Y_%H.%M.%S")
         logger.debug("Data atual: %s -> %s", now.isoformat(), timestamp)
 
-        if self.db is None:
+        if self.navegador is None:  # Instancia o navegador
             try:
-                self.db = DBClient(self.config)  # type: ignore[assignment]
+                self.navegador = WebController()
+                self._owns_browser = True
+            except Exception as e:
+                logger.exception("Falha ao instanciar o navegador: {e}")
+                raise
+
+        if self.db is None:  # Conecta ao banco de dados
+            try:
+                self.db = DBClient(self.config)
                 logger.info("Conectado ao Oracle em %s:%s/%s", self.config.db_host,
                             self.config.db_port, self.config.db_service)
                 self._owns_db = True
@@ -120,9 +129,18 @@ class Processamento:
 
         try:
             if self.db:
-                cursor = self.db.cursor()
+                # Obtém parâmetros do banco
+                self.url_tasy = self.proc_obter_parametro(
+                    chave="URL_TASY", id_projeto=9999, id_unidade=None, dev=None)
+
+                self.credencial_tasy = self.proc_obter_parametro(
+                    chave="CREDENCIAL_TASY", id_projeto=9999, id_unidade=None, dev=None)
+
+                self.usuario_tasy = self.credencial_tasy.split(";")[0]
+                self.senha_tasy = self.credencial_tasy.split(";")[1]
 
                 # Cria variável para receber o valor de saída
+                cursor = self.db.cursor()
                 id_execucao_out = cursor.var(oracledb.NUMBER)
 
                 params = {
@@ -149,7 +167,7 @@ class Processamento:
         except Exception:
             logger.exception("Erro ao registrar controle de execução")
 
-    def registrar_log(self, tipo_log: str, mensagem: str, nr_repasse: Optional[str] = None) -> None:
+    def registrar_log(self, tipo_log: str, mensagem: str, tipo_registro: Optional[str] = None) -> None:
         if self.config.dev_mode:
             if "INFO" in tipo_log.upper():
                 logger.info(mensagem)
@@ -161,29 +179,89 @@ class Processamento:
         if self.db:
             try:
                 params = {"p_id_execucao": self.controle_execucao or 0, "p_tipo_log": tipo_log,
-                          "p_registro_id": nr_repasse or "", "p_mensagem": mensagem}
+                          "p_registro_id": tipo_registro or "", "p_mensagem": mensagem}
                 self.db.call_procedure("ROBO_RPA.PR_REGISTRAR_LOG", params)
             except Exception as e:
                 logger.exception(f"Falha ao registrar log no banco: {e}")
 
+    def proc_obter_parametro(self, chave: str, id_unidade: int, id_projeto: int, dev: str) -> Optional[str]:
+
+        if not id_unidade:
+            id_unidade = int(self.config.id_unidade)
+        if not id_projeto:
+            id_projeto = int(self.config.id_projeto)
+        if not dev:
+            dev = str(self.config.dev_mode)
+
+        if not self.db:
+            raise RuntimeError("Banco não conectado")
+
+        try:
+            cursor = self.db.cursor()
+            out_valor = cursor.var(oracledb.DB_TYPE_VARCHAR)
+
+            params = {
+                "P_ID_UNIDADE": id_unidade,
+                "P_ID_PROJETO": id_projeto,
+                "P_CHAVE": chave,
+                "P_DEV": dev,
+                "P_VALOR": out_valor
+            }
+
+            self.db.call_procedure(
+                "ROBO_RPA.RPA_PARAMETRO_OBTER", params)
+
+            valor = out_valor.getvalue()
+            return valor
+        except Exception as e:
+            logger.exception(f"Erro ao obter parâmetro {chave}: {e}")
+            return None
+
     def login_tasy(self) -> bool:
         logger.info("Iniciando navegador Tasy")
         try:
-            if self.navegador is None:
-                self.navegador = WebController()
-                self._owns_browser = True
+
+            if not self.url_tasy:
+                raise RuntimeError("URL do Tasy não configurada")
+
+            self.navegador.navegar(self.url_tasy)
+            self.navegador.aguardar_elemento_visivel(
+                f"id", "loginUsername", timeout=60)
+            self.navegador.definir_valor(
+                f"id", "loginUsername", self.usuario_tasy, timeout=5)
+            self.navegador.definir_valor(
+                f"id", "loginPassword", self.senha_tasy, timeout=5)
+            self.navegador.click_elemento(
+                f"css", "#loginForm > input.btn-green.w-login-button.w-login-button--green", timeout=10)
+
+            if not self.navegador.aguardar_elemento_visivel(
+                    f"xpath", "//div[@class='ngdialog-content']//button", timeout=5):
+                self.registrar_log("INFO", f"Login Tasy: False")
+                return False
 
             self.registrar_log("INFO", f"Login Tasy: True")
+            # Os cliques abaixo são para fechar pop-ups que podem aparecer após o login
+            self.navegador.click_elemento(
+                f"xpath", "//div[@class='ngdialog-content']//button", timeout=5)
+            self.navegador.click_elemento(
+                f"xpath", "//div[@class='ngdialog-content' and contains(.,'TasyNative')]//span[contains(.,'Fechar')]", timeout=5, js=True)
+            self.navegador.click_elemento(
+                f"css", "#ngdialog2 > div.ngdialog-content > div.dialog-box.dialog-default > div.dialog-footer.ng-scope > div:nth-child(3) > tasy-wdlgpanel-button > button > span", timeout=5)
+            self.navegador.click_elemento(
+                f"xpath", "//button[text()='Agora não']", timeout=5, js=True)
+            self.navegador.click_elemento(
+                f"xpath", "//div[contains(.,'Comunicação Interna')]/div/button", timeout=5, js=True)
+            self.navegador.click_elemento(
+                f"xpath", "//div[contains(.,'Administração do Sistema')]/div/button", timeout=5, js=True)
+
+            self.tasy_navegar_menu_telas("Repasse para Terceiros")
             return True
-        except Exception:
-            logger.exception("Falha no login Tasy")
+        except Exception as e:
+            logger.exception(f"Falha no login Tasy: {e}")
             self.registrar_log("ERROR", "Login Tasy: False")
             return False
 
     def tasy_navegar_menu_telas(self, tela: str) -> None:
-        if not self.navegador:
-            raise RuntimeError("Navegador não iniciado")
-
         logger.info("Navegando para a tela: %s", tela)
         sucesso = self.navegador.aguardar_elemento_visivel(
             "xpath", "//input[@ng-model=\"search\"]", timeout=10)
@@ -200,15 +278,14 @@ class Processamento:
         self.navegador.click_elemento("xpath", f"//span[text()='{tela}']")
 
     def bd_importar_contas(self) -> int:
-        if not self.db:
-            raise RuntimeError("Banco não conectado")
-
         sql = (
-            "SELECT cnpj, razao_social, seq_terceiro, nr_repasse, nr_titulo, dt_lib_titulo, email, dt_ult_envio_email, dt_lib_repasse "
+            "SELECT cnpj, razao_social, seq_terceiro, nr_repasse, nr_titulo, dt_lib_titulo, email, dt_ult_envio_email, dt_lib_repasse,cd_estabelecimento "
             "FROM TASY.RPA_EMAIL_REPASSE_V "
-            "WHERE DT_LIB_TITULO >= TO_DATE('01/09/2025', 'DD/MM/YYYY') "
-            "ORDER BY DT_LIB_TITULO ASC"
+            "WHERE DT_LIB_TITULO >= TO_DATE('01/09/2025', 'DD/MM/YYYY') and cd_estabelecimento = 4 "
+            "ORDER BY DT_LIB_TITULO ASC "
+            "FETCH FIRST 50 ROWS ONLY"
         )
+
         rows = self.db.execute_query(sql)
         qtd_importados = 0
 
@@ -222,6 +299,7 @@ class Processamento:
             email = row.get("email")
             dt_ult_envio_email = row.get("dt_ult_envio_email")
             dt_lib_repasse = row.get("dt_lib_repasse")
+            cd_estabelecimento = row.get("cd_estabelecimento")
 
             sql_check = "SELECT 1 FROM hos_repasse_medico WHERE nr_repasse = :1"
             existe = self.db.execute_scalar(sql_check, (nr_repasse,))
@@ -229,17 +307,17 @@ class Processamento:
                 continue
 
             sql_insert = (
-                "INSERT INTO hos_repasse_medico (cnpj, razao_social, seq_terceiro, nr_repasse, nr_titulo, dt_lib_titulo, email, dt_ult_envio_email, status, dt_lib_repasse) "
-                "VALUES (:1, :2, :3, :4, :5, TO_DATE(:6, 'DD/MM/YYYY HH24:MI:SS'), :7, SYSDATE, 'P', TO_DATE(:8, 'DD/MM/YYYY HH24:MI:SS'))"
+                "INSERT INTO hos_repasse_medico (cnpj, razao_social, seq_terceiro, nr_repasse, nr_titulo, dt_lib_titulo, email, dt_ult_envio_email, status, dt_lib_repasse, cd_estabelecimento) "
+                "VALUES (:1, :2, :3, :4, :5, TO_DATE(:6, 'DD/MM/YYYY HH24:MI:SS'), :7, TO_DATE(:8, 'DD/MM/YYYY HH24:MI:SS'), 'P', TO_DATE(:9, 'DD/MM/YYYY HH24:MI:SS'), :10)"
             )
             params = (cnpj, razao_social, seq_terceiro, nr_repasse,
-                      nr_titulo, dt_lib_titulo, email, dt_lib_repasse)
+                      nr_titulo, dt_lib_titulo, email, dt_ult_envio_email, dt_lib_repasse, cd_estabelecimento)
             try:
                 self.db.execute_non_query(sql_insert, params)
                 qtd_importados += 1
                 self.registrar_log(
-                    "INFO", f"Inserido na tabela HOS_REPASSE_MEDICO: Terceiro: {seq_terceiro} - Repasse: {nr_repasse} - Título: {nr_titulo} - CNPJ: {cnpj} - Status: P", nr_repasse)
-            except Exception:
+                    "INFO", f"Inserido na tabela HOS_REPASSE_MEDICO: Terceiro: {seq_terceiro} - Repasse: {nr_repasse} - Título: {nr_titulo} - CNPJ: {cnpj} - Status: P - Estabelecimento: {cd_estabelecimento}", nr_repasse)
+            except Exception as e:
                 logger.exception("Falha ao inserir repasse %s", nr_repasse)
 
         self.registrar_log(
@@ -247,9 +325,6 @@ class Processamento:
         return qtd_importados
 
     def executar(self) -> None:
-        if not self.db:
-            raise RuntimeError("Banco não conectado")
-
         self.registrar_log(
             "INFO", f"Inicio robô - Id Exec: {self.controle_execucao}")
 
@@ -259,11 +334,7 @@ class Processamento:
             self.registrar_log("INFO", "Sem repasses para realizar o envio")
             return
 
-        if not self.login_tasy():
-            logger.error("Não foi possível efetuar login no Tasy")
-            return
-
-        self.tasy_navegar_menu_telas("Repasse para Terceiros")
+        self.login_tasy()
 
         for idx, row in enumerate(tabela, start=1):
             cnpj = row.get("cnpj")
@@ -291,14 +362,14 @@ class Processamento:
                     raise RuntimeError("Navegador não iniciado")
 
                 nav.aguardar_elemento_visivel(
-                    "xpath", "//div[@class=\"token-filter-container ng-scope\"]/tasy-wlabel", timeout=10)
+                    "xpath", '//div[@class="token-filter-container ng-scope"]/tasy-wlabel', timeout=10)
                 nav.click_elemento(
-                    "xpath", "//div[@class=\"token-filter-container ng-scope\"]/tasy-wlabel")
+                    "xpath", '//div[@class="token-filter-container ng-scope"]/tasy-wlabel')
 
                 nav.aguardar_elemento_visivel(
-                    "xpath", "//div[@class=\"filter-modal-content\"]", timeout=10)
+                    "xpath", '//div[@class="filter-modal-content"]', timeout=10)
                 nav.definir_valor(
-                    "xpath", "//div[@class=\"filter-modal-content\"]//input[@name=\"NR_SEQ_TERCEIRO\"]", str(seq_terceiro))
+                    "xpath", '//div[@class="filter-modal-content"]//input[@name="NR_SEQ_TERCEIRO"]', str(seq_terceiro))
                 nav.aguardar(0.5)
                 nav.executar_javascript("document.activeElement.blur();")
 
@@ -324,11 +395,11 @@ class Processamento:
                     continue
 
                 nav.click_elemento(
-                    "xpath", "//div[@class=\"filter-modal-content\"]//button[contains(.,'Filtrar')]")
+                    "xpath", '//div[@class="filter-modal-content"]//button[contains(.,"Filtrar")]')
                 nav.aguardar(1)
 
                 found = nav.aguardar_elemento_visivel(
-                    "xpath", f"//div[@class=\"datagrid-grid-container\"]//div[@class=\"ui-widget-content slick-row even active\"]/div[contains(.,'{seq_terceiro}')]", timeout=10)
+                    "xpath", f'//div[@class="datagrid-grid-container"]//div[@class="ui-widget-content slick-row even active"]/div[contains(.,{seq_terceiro})]', timeout=10)
                 if not found:
                     status = "I"
                     status_msg = f"Não encontrou a sequência: {seq_terceiro}"
@@ -351,7 +422,8 @@ class Processamento:
                     "xpath", "//span[contains(.,'Enviar E-mail')]")
 
                 nav.aguardar_elemento_visivel(
-                    "xpath", "//div[@class=\"ngdialog-content\" and contains(.,'Email destino')]", timeout=10)
+                    "xpath", '//div[@class="ngdialog-content" and contains(.,"Email destino")]', timeout=10)
+
                 if self.config.dev_mode:
                     nav.definir_valor(
                         "xpath", "//div[@class=\"ngdialog-content\" and contains(.,'Email destino')]//input[@name=\"DS_EMAIL_DESTINO\"]", "aalves@austa.com.br")

@@ -1,6 +1,6 @@
-"""Auxiliares para automação web (WebController).
+"""Comandos para automação 
 
-Este módulo fornece um pequeno wrapper em torno do Selenium WebDriver com uma
+Este módulo fornece comandos utilizando Selenium WebDriver com uma
 proteção de compatibilidade: se o `selenium` não estiver instalado, o módulo ainda pode ser
 importado, mas ao tentar instanciar `WebController` gera um erro claro.
 """
@@ -11,9 +11,6 @@ import os
 from pathlib import Path
 from typing import Any, Optional, Tuple, List, Dict, TYPE_CHECKING
 
-if TYPE_CHECKING:
-    # evita ciclos de importação em tempo de execução; Config é definido em automacao_repasse.py
-    from processamento import Config  # type: ignore
 
 try:
     from selenium import webdriver
@@ -39,20 +36,20 @@ try:
         _WEBDRIVER_MANAGER_AVAILABLE = False
 
     _SELENIUM_AVAILABLE = True
-except Exception:  # pragma: no cover - environment dependent
+except Exception:
     _SELENIUM_AVAILABLE = False
-    webdriver = None  # type: ignore
-    WebDriver = object  # type: ignore
-    Options = object  # type: ignore
-    ChromeService = object  # type: ignore
-    WebDriverWait = object  # type: ignore
-    Select = object  # type: ignore
-    EC = object  # type: ignore
-    TimeoutException = Exception  # type: ignore
-    NoAlertPresentException = Exception  # type: ignore
-    WebDriverException = Exception  # type: ignore
-    By = object  # type: ignore
-    ActionChains = object  # type: ignore
+    webdriver = None
+    WebDriver = object
+    Options = object
+    ChromeService = object
+    WebDriverWait = object
+    Select = object
+    EC = object
+    TimeoutException = Exception
+    NoAlertPresentException = Exception
+    WebDriverException = Exception
+    By = object
+    ActionChains = object
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -60,9 +57,9 @@ logger = logging.getLogger(__name__)
 # Funções utilitárias internas
 # mesmo quando o driver oracledb não está instalado no ambiente.
 try:
-    import oracledb  # type: ignore
-except Exception:  # pragma: no cover - environment dependent
-    oracledb = None  # type: ignore
+    import oracledb
+except Exception:
+    oracledb = None
 
 
 if not _SELENIUM_AVAILABLE:
@@ -80,7 +77,7 @@ if not _SELENIUM_AVAILABLE:
 
 else:
     class WebController:
-        """Wrapper simples do Selenium WebDriver com auxiliares convenientes."""
+        """Wrapper do Selenium WebDriver."""
 
         def __init__(self, driver_path: Optional[str] = None, browser: str = "chrome") -> None:
             """Inicializa o controlador de navegador.
@@ -193,7 +190,6 @@ else:
                 logger.error("Erro ao iniciar navegador: %s", e)
                 raise
 
-                # Navegação e controle de navegador
         def navegar(self, url: str) -> None:
             """Navega para uma URL específica no navegador.
 
@@ -278,8 +274,7 @@ else:
                 time.sleep(0.5)
             return False
 
-        # Interação com elementos
-        def click_elemento(self, seletor: str, valor: str, timeout: int = 10) -> None:
+        def click_elemento(self, seletor: str, valor: str, timeout: int = 10, js: bool = False) -> bool:
             """Clica em um elemento da página web identificado pelo seletor especificado.
 
             Args:
@@ -301,9 +296,17 @@ else:
                 controller.click_elemento('xpath', '//a[text()="Próximo"]')
             """
             el = self._encontrar_elemento(seletor, valor, timeout)
-            el.click()
+            if js:
+                if el:
+                    self.driver.execute_script("arguments[0].click();", el)
+                    return True
+            else:
+                if el:
+                    el.click()
+                    return True
+            return False
 
-        def definir_valor(self, seletor: str, valor: str, texto: str, timeout: int = 10) -> None:
+        def definir_valor(self, seletor: str, valor: str, texto: str, timeout: int = 5) -> None:
             """Define um texto em um elemento de input após limpar seu conteúdo anterior.
 
             Args:
@@ -323,7 +326,7 @@ else:
                 controller.definir_valor('id', 'email', 'usuario@exemplo.com')
 
                 # Preenche um campo de busca
-                controller.definir_valor('name', 'q', 'termos de busca')
+                controller.definir_valor('name', 'busca', 'termos de busca')
             """
             el = self._encontrar_elemento(seletor, valor, timeout)
             el.clear()
@@ -519,7 +522,7 @@ else:
             }
             return (mapa[seletor], valor)
 
-        def _encontrar_elemento(self, seletor: str, valor: str, timeout: int = 10):
+        def _encontrar_elemento(self, seletor: str, valor: str, timeout: int = 5):
             """Espera até que o elemento esteja presente no DOM e o retorna.
 
             Lança TimeoutException se não for encontrado dentro do timeout.
@@ -530,7 +533,7 @@ else:
                 )
             except TimeoutException:
                 logger.error("Elemento não encontrado: %s=%s", seletor, valor)
-                raise
+                return False
 
         # Logging e helpers
         def log_info(self, mensagem: str) -> None:
@@ -559,7 +562,7 @@ class DBClient:
     """Pequeno cliente Oracle movido para este módulo.
 
     Usa o driver `oracledb` quando disponível. O tipo `Config` é usado como
-    forward reference (não importamos Config aqui para evitar ciclos de import).
+    forward reference.
     """
 
     def __init__(self, config: "Config") -> None:
@@ -591,8 +594,8 @@ class DBClient:
                 user=config.db_user, password=config.db_password, dsn=dsn)
             return
         except Exception as e:
-            # If the driver complains that init_oracle_client() must be called first
-            # or that the password verifier isn't supported in thin mode (DPY-3015)
+            #  Se o driver reclamar que init_oracle_client() precisa ser chamado primeiro
+            #  ou que o verificador de senha não é compatível no modo thin (DPY-3015)
             msg = str(e)
             # DPY-2021 e DPY-3015 são casos conhecidos onde thick client/init_oracle_client é necessário
             if (
@@ -639,11 +642,11 @@ class DBClient:
             else:
                 # Erro desconhecido - relança
                 raise
-            
+
     def cursor(self):
         """Retorna um cursor Oracle padrão"""
         return self.conn.cursor()
-                
+
     def execute_query(self, sql: str, params: Optional[Tuple] = None) -> List[Dict[str, Any]]:
         """Executa uma consulta SQL e retorna os resultados como uma lista de dicionários.
 
