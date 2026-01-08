@@ -95,16 +95,3 @@ Debug e troubleshooting
 - Erro ao conectar ao Oracle: verifique `AUSTA_BD_ORACLE_DEV`, `BD_USUARIO`, `BD_SENHA` e se o driver precisa de Instant Client.
 - Logs: o projeto usa `logging` com nível INFO; aumente para DEBUG em `main.py` se precisar de mais detalhes.
 
-Alterações úteis que posso aplicar (diga qual quer):
-- Adicionar `webdriver-manager` e alterar `comandos.WebController` para usar drivers automáticos.
-- Criar um `make.bat` ou script PowerShell para automatizar criação do venv e instalação.
-- Adicionar exemplos de `.env.example` com as variáveis mínimas.
-
-Se precisar, eu executo (aqui no workspace) um run seguro em modo DEV (não conecta ao Oracle) e trago a saída dos logs para você.
-
----
-Licença / Observações
-
-Este é um projeto de conversão/experimento para uso interno. Ajustes serão necessários
-para rodar em produção (tornar seguras as credenciais, tratar erros, testes automatizados, etc.).
-
