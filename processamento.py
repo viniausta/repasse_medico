@@ -330,11 +330,12 @@ class Processamento:
 
         tabela = self.db.execute_query(
             "select * from hos_repasse_medico where status = 'P'")
-        if not tabela:
+        '''if not tabela:
             self.registrar_log("INFO", "Sem repasses para realizar o envio")
-            return
+            return'''
 
         self.login_tasy()
+        return
 
         for idx, row in enumerate(tabela, start=1):
             cnpj = row.get("cnpj")
